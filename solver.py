@@ -10,6 +10,7 @@ from collections import defaultdict
 from functools import cache
 
 INF = 1_000_000
+ITERATION = 200
 
 
 class State:
@@ -37,19 +38,34 @@ class MCTS_Node:
         self.parent = parent
         self.parent_action = parent_action
         self.result = defaultdict(int)
+        self.game_result = {}
+        self.game_result["hurdle"] = defaultdict(int)
+        self.game_result["archery"] = defaultdict(int)
+        self.game_result["dive"] = defaultdict(int)
         self.score = 0
         self._unexplored_actions = self.state.possible_moves()
 
     def selection(self, c_param=0.1):
-        weights = []
         max_score = -INF
-        for child in self.children:
-            w = child.result[1] - child.result[-1]
+        max_index = 0
+        for i in range(len(self.children)):
+            child = self.children[i]
+            w_archery = (
+                child.game_result["archery"][1] - child.game_result["archery"][-1]
+            ) / max(0.01, child.state.archery.medal)
+            w_dive = (
+                child.game_result["dive"][1] - child.game_result["dive"][-1]
+            ) / max(0.01, child.state.dive.medal)
+            w_hurdle = (
+                child.game_result["hurdle"][1] - child.game_result["hurdle"][-1]
+            ) / max(0.01, child.state.race.medal)
+            w = w_archery + w_dive + w_hurdle
             score = w / child.n + c_param * math.sqrt((2 * math.log(self.n / child.n)))
-            child.score = score
-            max_score = max(max_score, score)
-            weights.append(score)
-        return self.children[weights.index(max_score)]
+            self.children[i].score = score
+            if score > max_score:
+                max_score = score
+                max_index = i
+        return self.children[max_index]
 
     def expansion(self):
         action = self._unexplored_actions.pop()
@@ -68,7 +84,9 @@ class MCTS_Node:
         return copyGame.result()
 
     def backprop(self, result):
-        self.result[result] += 1
+        self.game_result["dive"][result["dive"]] += 1
+        self.game_result["archery"][result["archery"]] += 1
+        self.game_result["hurdle"][result["hurdle"]] += 1
         self.n += 1
         if self.parent:
             self.parent.backprop(result)
@@ -87,19 +105,15 @@ class MCTS_Node:
 
 
 class MCTS:
-    def search(self, state: State, iteration=100, logging=False):
+    def search(self, state: State, iteration=100):
         root = MCTS_Node(state, None, None)
-        start = time.time()
         for _ in range(iteration):
             v = root.search()
             reward = v.simulation()
             v.backprop(reward)
         choice = root.selection()
-        end = time.time()
-        if logging:
-            debug(f"Average iteration: {(end-start)/iteration:.2f}")
-            debug(f"best move score: {choice.score}")
-        return choice.parent_action
+        convert = {"L": "LEFT", "R": "RIGHT", "U": "UP", "D": "DOWN"}
+        return convert[choice.parent_action]
 
 
 def debug(*args):
@@ -143,51 +157,51 @@ class GameState(State):
 
     def is_terminal(self):
         return (
-            (self.race.track == "GAME_OVER" or max(self.race.pos) >= 30)
-            and (self.archery.wind == "GAME_OVER" or len(self.archery.wind) == 0)
-            and (self.dive.goal == "GAME_OVER" or len(self.dive.goal) == 0) 
+            (self.race.track == "G" or max(self.race.pos) >= 30)
+            and (self.archery.wind == "G" or len(self.archery.wind) == 0)
+            and (self.dive.goal == "G" or len(self.dive.goal) == 0)
         )
 
     def result(self):
-        game_eval = 0
-        if self.dive.goal != "GAME_OVER" and len(self.dive.goal) == 0:
+        game_eval = {"archery": 0, "dive": 0, "hurdle": 0}
+        if self.dive.goal != "G" and len(self.dive.goal) == 0:
             if self.dive.points[self.dive.pid] == max(self.dive.points):
-                game_eval += 1
-            elif self.dive.points[self.dive.pid] == min(self.dive.points):
-                game_eval -= 1
-        if self.archery.wind != "GAME_OVER" and len(self.archery.wind) == 0:
+                game_eval["dive"] = 1
+            else:
+                game_eval["dive"] = -1
+        if self.archery.wind != "G" and len(self.archery.wind) == 0:
             if self.archery.distance[self.archery.pid] == min(self.archery.distance):
-                game_eval += 1
-            elif self.archery.distance[self.archery.pid] == max(self.archery.distance):
-                game_eval -= 1
-        if self.race.track != "GAME_OVER" and max(self.race.pos) >= 30:
+                game_eval["archery"] = 1
+            else:
+                game_eval["archery"] = -1
+        if self.race.track != "G" and max(self.race.pos) >= 30:
             if self.race.time[self.race.pid] == max(self.race.time):
-                game_eval += 1
-            elif self.race.time[self.race.pid] == min(self.race.time):
-                game_eval -= 1
+                game_eval["hurdle"] = 1
+            else:
+                game_eval["hurdle"] = -1
         return game_eval
 
     def handle_hurdle_move(self, action, pid):
         stun = self.race.stun[pid]
         track = self.race.track
         pos = self.race.pos[pid]
-        if action == "LEFT":
+        if action == "L":
             self.race.pos[pid] += 1
             if "#" in track[pos + 1 : pos + 2]:
                 self.race.time[pid] += stun
-        if action == "RIGHT":
+        if action == "R":
             self.race.pos[pid] += 3
             if "#" in track[pos + 1 : pos + 4]:
                 loc = track[pos + 1 : pos + 4].index("#")
                 self.race.pos[pid] = pos + loc + 1
                 self.race.time[pid] += stun
-        if action == "UP":
+        if action == "U":
             self.race.pos[pid] += 2
             if "#" in track[pos + 2 : pos + 3]:
                 loc = track[pos + 1 : pos + 4].index("#")
                 self.race.pos[pid] = pos + loc + 1
                 self.race.time[pid] += stun
-        if action == "DOWN":
+        if action == "D":
             self.race.pos[pid] += 2
             if "#" in track[pos + 1 : pos + 3]:
                 loc = track[pos + 1 : pos + 4].index("#")
@@ -198,11 +212,11 @@ class GameState(State):
     def handle_archery_move(self, action, pid, wind_speed):
         if wind_speed == None:
             wind_speed = int(self.archery.wind.pop(0))
-        if action == "UP":
+        if action == "U":
             self.archery.y[pid] -= wind_speed
-        elif action == "DOWN":
+        elif action == "D":
             self.archery.y[pid] += wind_speed
-        elif action == "LEFT":
+        elif action == "L":
             self.archery.x[pid] -= wind_speed
         else:
             self.archery.x[pid] += wind_speed
@@ -222,30 +236,30 @@ class GameState(State):
     def take_action(self, action):
         bots = [0, 1, 2]
         bots.remove(self.race.pid)
-        if self.race.track != "GAME_OVER" and max(self.race.pos) < 30:
+        if self.race.track != "G" and max(self.race.pos) < 30:
             self.handle_hurdle_move(action, self.race.pid)
             self.handle_hurdle_move(random.choice(self.enemy_moves(bots[0])), bots[0])
             self.handle_hurdle_move(random.choice(self.enemy_moves(bots[1])), bots[1])
-        if self.archery.wind != "GAME_OVER" and len(self.archery.wind) > 0:
+        if self.archery.wind != "G" and len(self.archery.wind) > 0:
             self.handle_archery_move(
-                random.choice(["UP", "DOWN", "LEFT", "RIGHT"]),
+                random.choice(["U", "D", "L", "R"]),
                 bots[0],
                 self.archery.wind[0],
             )
             self.handle_archery_move(
-                random.choice(["UP", "DOWN", "LEFT", "RIGHT"]),
+                random.choice(["U", "D", "L", "R"]),
                 bots[1],
                 self.archery.wind[0],
             )
             self.handle_archery_move(action, self.archery.pid, None)
-        if self.dive.goal != "GAME_OVER" and len(self.dive.goal) > 0:
+        if self.dive.goal != "G" and len(self.dive.goal) > 0:
             self.handle_dive_move(
-                random.choice(["UP", "DOWN", "LEFT", "RIGHT"]),
+                random.choice(["U", "D", "L", "R"]),
                 bots[0],
                 self.dive.goal[0],
             )
             self.handle_dive_move(
-                random.choice(["UP", "DOWN", "LEFT", "RIGHT"]),
+                random.choice(["U", "D", "L", "R"]),
                 bots[1],
                 self.dive.goal[0],
             )
@@ -253,35 +267,42 @@ class GameState(State):
 
     def possible_moves(self):
         moves = []
-        if self.race.track != "GAME_OVER":
+        if self.race.track != "G":
             pos = self.race.pos[self.race.pid]
             if "#" == self.race.track[pos + 1 : pos + 2]:
-                moves.append("UP")
+                moves.append("U")
             if "#" not in self.race.track[pos + 1 : pos + 4]:
-                moves.append("RIGHT")
+                moves.append("R")
             if "#" not in self.race.track[pos + 1 : pos + 3]:
-                moves.append("DOWN")
+                moves.append("D")
             if "#" not in self.race.track[pos + 1 : pos + 2]:
-                moves.append("LEFT")
+                moves.append("L")
         if len(moves) == 0:
-            return ["UP", "RIGHT", "DOWN", "LEFT"]
+            return ["U", "R", "D", "L"]
+        if (
+            self.race.medal >= self.dive.medal
+            and len(self.dive.goal) > 0
+            and self.dive.goal[0] != "G"
+            and self.dive.goal[0] not in moves
+        ):
+            moves.append(self.dive.goal[0])
         return moves
 
     def enemy_moves(self, pid):
         moves = []
         pos = self.race.pos[pid]
         if "#" == self.race.track[pos + 1 : pos + 2]:
-            moves.append("UP")
+            moves.append("U")
         if "#" not in self.race.track[pos + 1 : pos + 4]:
-            moves.append("RIGHT")
+            moves.append("R")
         if "#" not in self.race.track[pos + 1 : pos + 3]:
-            moves.append("DOWN")
+            moves.append("D")
         if "#" not in self.race.track[pos + 1 : pos + 2]:
-            moves.append("LEFT")
+            moves.append("L")
         return moves
 
     def distance(self, x, y):
-        return math.sqrt(x * x + y * y)
+        return x * x + y * y
 
 
 class Solver:
@@ -292,10 +313,10 @@ class Solver:
         res = 0
         while pos < 30:
             race = Race(0, 0, [res, res, res], track, [pos, 0, 0], [stun, 0, 0])
-            archery = Archery(0, 0, 0, "GAME_OVER", 0, 0)
-            dive = Dive(0, 0, "GAME_OVER", [], [])
+            archery = Archery(0, 0, 0, 'G', 0, 0)
+            dive = Dive(0, 0, 'G', [], [])
             state = GameState(race, archery, dive)
-            action = self.ai.search(state, iteration=1000, logging=False)
+            action = self.ai.search(state, iteration=ITERATION)
             if action == "LEFT":
                 if "#" in track[pos + 1 : pos + 2]:
                     pos += 1
@@ -392,7 +413,7 @@ class Solver:
         return res
 
     def distance(self, x, y):
-        return math.sqrt(x * x + y * y)
+        return x * x + y * y
 
     def greedy_archery(self, wind, x, y):
         while len(wind) > 0:
@@ -431,7 +452,7 @@ class Solver:
 
     def sim_archery(self, wind, x, y):
         while len(wind) > 0:
-            race = Race(0, 0, [], "GAME_OVER", [], [])
+            race = Race(0, 0, [], 'G', [], [])
             archery = Archery(
                 0,
                 0,
@@ -444,9 +465,9 @@ class Solver:
                 x,
                 y,
             )
-            dive = Dive(0, 0, "GAME_OVER", 0, [])
+            dive = Dive(0, 0, 'G', 0, [])
             state = GameState(race, archery, dive)
-            action = self.ai.search(state, iteration=1000, logging=False)
+            action = self.ai.search(state, iteration=ITERATION)
             if action == "UP":
                 y[0] -= wind.pop(0)
             elif action == "DOWN":
@@ -495,11 +516,11 @@ class Solver:
         bonus = 0
         copy_dive = copy(dive)
         while len(copy_dive) > 0:
-            race = Race(0, 0, [0, 0, 0], "GAME_OVER", [0, 0, 0], [0, 0, 0])
-            archery = Archery(0, 0, [], "GAME_OVER", [], [])
+            race = Race(0, 0, [0, 0, 0], 'G', [0, 0, 0], [0, 0, 0])
+            archery = Archery(0, 0, [], 'G', [], [])
             dive = Dive(0, pid, copy_dive, [res, res, res], [bonus, bonus, bonus])
             state = GameState(race, archery, dive)
-            action = self.ai.search(state, iteration=1000, logging=False)
+            action = self.ai.search(state, iteration=ITERATION)
             if action[0] == copy_dive.pop(0):
                 bonus += 1
                 res += bonus
@@ -510,8 +531,9 @@ class Solver:
     def sim_combined(self, track, pos, stun, wind, x, y, dive):
         res = 0
         bonus = 0
+        res_bonus = 0
         copy_dive = dive[:]
-        while pos < 30 or len(wind) > 0:
+        while pos < 30 or len(wind) > 0 or len(copy_dive):
             race = Race(0, 0, [res, res, res], track, [pos, 0, 0], [stun, 0, 0])
             archery = Archery(
                 0,
@@ -528,7 +550,7 @@ class Solver:
             cp = copy_dive[:]
             dive = Dive(0, 0, cp, [res, res, res], [bonus, bonus, bonus])
             state = GameState(race, archery, dive)
-            action = self.ai.search(state, iteration=1000, logging=False)
+            action = self.ai.search(state, iteration=ITERATION)
             if action == "LEFT":
                 if "#" in track[pos + 1 : pos + 2]:
                     pos += 1
@@ -568,9 +590,10 @@ class Solver:
                     x[0] -= wind.pop(0)
                 else:
                     x[0] += wind.pop(0)
-            if action[0] == copy_dive.pop(0):
-                bonus += 1
-                res += bonus
-            else:
-                bonus = 0
-        return res, self.distance(x[0], y[0]), bonus
+            if len(copy_dive) > 0:
+                if action[0] == copy_dive.pop(0):
+                    bonus += 1
+                    res_bonus += bonus
+                else:
+                    bonus = 0
+        return res, self.distance(x[0], y[0]), res_bonus
