@@ -4,7 +4,7 @@
 python run.py
 ```
 
-## PERFORMANCE
+## PERFORMANCE (Higher the better)
 
 ----------HURDLE----------
 
