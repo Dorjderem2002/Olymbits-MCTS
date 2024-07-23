@@ -1,4 +1,10 @@
-## Performance
+## RUN
+
+```
+python run.py
+```
+
+## PERFORMANCE
 
 ----------HURDLE----------
 
