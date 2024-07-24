@@ -9,4 +9,3 @@ while not env.is_terminal():
     env.take_action(random.choice(possible_moves))
 
 print(env.reward())
-

@@ -14,6 +14,19 @@ while not env.is_terminal():
 print(env.reward())
 ```
 
+## LIBRARY INTERFACE
+
+```py
+is_terminal() -> bool
+possible_moves() -> List[str]
+take_action() -> None
+get_state() -> List
+get_race_state() -> Race
+get_archery_state() -> Archery
+get_dive_state() -> Dive
+reward() -> Dict
+```
+
 ## RUN
 
 ```bash
