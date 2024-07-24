@@ -1,6 +1,6 @@
 ## EXAMPLE USE AS LIBRARY
 
-```
+```py
 import random
 from olymbits import Olymbits
 
@@ -16,7 +16,7 @@ print(env.reward())
 
 ## RUN
 
-```
+```bash
 python run.py
 ```
 
